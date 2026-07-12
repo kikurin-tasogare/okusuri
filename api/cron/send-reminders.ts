@@ -1,6 +1,13 @@
 import { getAppEnv } from "../../lib/env.js";
 import { pushReminder } from "../../lib/line.js";
-import { findDueReminders, hasReminderSendLog, recordReminderSendLog } from "../../lib/reminders.js";
+import {
+  claimReminderSnooze,
+  findDueReminders,
+  findDueReminderSnoozes,
+  findReminderForLineUser,
+  hasReminderSendLog,
+  recordReminderSendLog
+} from "../../lib/reminders.js";
 import { requireAdminAuth } from "../../lib/auth.js";
 import { ensureResponseHelpers, type VercelRequest, type VercelResponse } from "../../lib/vercel.js";
 
@@ -55,6 +62,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // invocations cannot both send (the unique constraint arbitrates).
     const claimed = await recordReminderSendLog(reminder.id, scheduledKey);
     if (!claimed) {
+      skipped += 1;
+      continue;
+    }
+
+    await pushReminder(reminder.line_user_id, reminder.id, reminder.title, reminder.action_label);
+    sent += 1;
+  }
+
+  const dueSnoozes = await findDueReminderSnoozes(now);
+
+  for (const snooze of dueSnoozes) {
+    // Snoozes use delete-after-claim instead of reminder_send_logs, so a snoozed
+    // re-push is never blocked by the original send's dedupe entry.
+    const claimed = await claimReminderSnooze(snooze.id);
+    if (!claimed) {
+      skipped += 1;
+      continue;
+    }
+
+    const reminder = await findReminderForLineUser(snooze.reminder_id, snooze.line_user_id);
+    if (!reminder || !reminder.enabled || !reminder.line_user_id) {
       skipped += 1;
       continue;
     }

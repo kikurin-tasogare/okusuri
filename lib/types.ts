@@ -34,3 +34,22 @@ export type ReminderSendLogRow = {
   scheduled_key: string;
   sent_at: string;
 };
+
+export type ReminderSnoozeRow = {
+  id: string;
+  reminder_id: string;
+  line_user_id: string;
+  remind_at: string;
+};
+
+export type PendingEditRow = {
+  line_user_id: string;
+  reminder_id: string;
+  created_at: string;
+};
+
+export type DoseLogHistoryEntry = {
+  id: string;
+  taken_at: string;
+  title: string;
+};

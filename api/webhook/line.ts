@@ -1,16 +1,25 @@
 import {
+  replyDoseLogHistory,
+  replyEditTimePrompt,
+  replyFeatureNotReady,
   replyLinked,
   replyRecorded,
   replyRegistrationConfirm,
   replyRegistrationDone,
   replyReminderDeleted,
   replyReminderList,
+  replyReminderNotFound,
+  replySnoozed,
+  replyTimeUpdated,
   replyUsage,
   verifyLineSignature,
   type ReminderDraft
 } from "../../lib/line.js";
 import { ensureResponseHelpers, readRawBody, type VercelRequest, type VercelResponse } from "../../lib/vercel.js";
-import type { ReminderCategory } from "../../lib/types.js";
+import type { PendingEditRow, ReminderCategory } from "../../lib/types.js";
+
+const pendingEditTtlMs = 10 * 60 * 1000;
+const snoozeDelayMs = 15 * 60 * 1000;
 
 type LineEvent = {
   type: string;
@@ -29,6 +38,16 @@ async function saveLineUser(lineUserId: string) {
   }
 }
 
+async function takePendingEditSafely(lineUserId: string): Promise<PendingEditRow | null> {
+  try {
+    const { takePendingEdit } = await import("../../lib/reminders.js");
+    return await takePendingEdit(lineUserId);
+  } catch (_error) {
+    // Supabase may not be configured yet: treat it as "no pending edit".
+    return null;
+  }
+}
+
 function inferCategory(title: string): ReminderCategory {
   if (/薬|くすり|おくすり|錠|カプセル|漢方/.test(title)) return "medicine";
   if (/サプリ|ビタミン|ミネラル/.test(title)) return "supplement";
@@ -36,10 +55,24 @@ function inferCategory(title: string): ReminderCategory {
   return "other";
 }
 
+function toHalfWidthDigits(text: string) {
+  return text.replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+}
+
+function parseTimeOnly(text: string): string | null {
+  const trimmed = toHalfWidthDigits(text.trim());
+  const timeMatch = trimmed.match(/^([01]?\d|2[0-3])\s*(?::|：|時)\s*(?:([0-5]?\d)\s*分?)?$/);
+  if (!timeMatch) {
+    return null;
+  }
+
+  const hour = Number(timeMatch[1]);
+  const minute = timeMatch[2] ? Number(timeMatch[2]) : 0;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
 function parseReminderDraft(text: string): ReminderDraft | null {
-  const trimmed = text
-    .trim()
-    .replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+  const trimmed = toHalfWidthDigits(text.trim());
   const timeMatch = trimmed.match(/([01]?\d|2[0-3])\s*(?::|：|時)\s*(?:([0-5]?\d)\s*分?)?/);
   if (!timeMatch) {
     return null;
@@ -104,9 +137,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await saveLineUser(lineUserId);
         const text = event.message.text?.trim() ?? "";
 
+        const pendingEdit = await takePendingEditSafely(lineUserId);
+        if (pendingEdit) {
+          const newTime = parseTimeOnly(text);
+          const isFresh = Date.now() - new Date(pendingEdit.created_at).getTime() <= pendingEditTtlMs;
+          if (newTime && isFresh) {
+            const { updateReminderTimeForLineUser } = await import("../../lib/reminders.js");
+            if (await updateReminderTimeForLineUser(pendingEdit.reminder_id, lineUserId, newTime)) {
+              await replyTimeUpdated(event.replyToken, newTime);
+            } else {
+              await replyReminderNotFound(event.replyToken);
+            }
+            continue;
+          }
+          // Not a time-only message (or the request is too old): the pending edit is
+          // already cleared, so fall through to normal message handling.
+        }
+
         if (/^(一覧|リスト|確認)$/.test(text)) {
           const { listRemindersForLineUser } = await import("../../lib/reminders.js");
           await replyReminderList(event.replyToken, await listRemindersForLineUser(lineUserId));
+          continue;
+        }
+
+        if (/^(きろく|記録|ログ)$/.test(text)) {
+          const { listDoseLogHistoryForLineUser } = await import("../../lib/reminders.js");
+          await replyDoseLogHistory(event.replyToken, await listDoseLogHistoryForLineUser(lineUserId));
           continue;
         }
 
@@ -170,6 +226,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const { deleteReminderForLineUser } = await import("../../lib/reminders.js");
           await deleteReminderForLineUser(data.reminderId, lineUserId);
           await replyReminderDeleted(event.replyToken);
+        }
+
+        if (data.type === "snooze-reminder" && data.reminderId) {
+          const { createReminderSnooze } = await import("../../lib/reminders.js");
+          const remindAt = new Date(Date.now() + snoozeDelayMs);
+          if (await createReminderSnooze(data.reminderId, lineUserId, remindAt)) {
+            await replySnoozed(event.replyToken);
+          } else {
+            await replyFeatureNotReady(event.replyToken);
+          }
+        }
+
+        if (data.type === "edit-reminder-time" && data.reminderId) {
+          const { setPendingEdit } = await import("../../lib/reminders.js");
+          if (await setPendingEdit(data.reminderId, lineUserId)) {
+            await replyEditTimePrompt(event.replyToken);
+          } else {
+            await replyFeatureNotReady(event.replyToken);
+          }
         }
       }
     } catch (error) {

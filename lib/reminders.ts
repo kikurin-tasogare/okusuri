@@ -1,6 +1,15 @@
 import { supabase } from "./supabase.js";
 import { decryptPrivateText, encryptPrivateText } from "./privacy.js";
-import type { LineUserRow, ReminderAdminSummaryRow, ReminderCategory, ReminderKind, ReminderRow } from "./types.js";
+import type {
+  DoseLogHistoryEntry,
+  LineUserRow,
+  PendingEditRow,
+  ReminderAdminSummaryRow,
+  ReminderCategory,
+  ReminderKind,
+  ReminderRow,
+  ReminderSnoozeRow
+} from "./types.js";
 
 export async function upsertLineUser(lineUserId: string) {
   const { error } = await supabase.from("line_users").upsert(
@@ -120,20 +129,39 @@ export async function deleteReminderForLineUser(reminderId: string, lineUserId: 
   }
 }
 
-export async function recordReminder(reminderId: string, lineUserId: string) {
-  const { data: reminder, error: reminderError } = await supabase
+async function assertReminderOwnedByLineUser(reminderId: string, lineUserId: string) {
+  const { data: reminder, error } = await supabase
     .from("reminders")
     .select("id, line_user_id")
     .eq("id", reminderId)
     .maybeSingle();
 
-  if (reminderError) {
-    throw reminderError;
+  if (error) {
+    throw error;
   }
 
   if (!reminder || reminder.line_user_id !== lineUserId) {
     throw new Error("Reminder not found");
   }
+}
+
+export async function updateReminderTimeForLineUser(reminderId: string, lineUserId: string, time: string) {
+  const { data, error } = await supabase
+    .from("reminders")
+    .update({ time })
+    .eq("id", reminderId)
+    .eq("line_user_id", lineUserId)
+    .select("id");
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []).length > 0;
+}
+
+export async function recordReminder(reminderId: string, lineUserId: string) {
+  await assertReminderOwnedByLineUser(reminderId, lineUserId);
 
   const { error } = await supabase.from("dose_logs").insert({
     reminder_id: reminderId,
@@ -226,4 +254,157 @@ export async function findDueReminders(now: Date) {
     }
     return reminder.days_of_week.includes(day);
   });
+}
+
+export async function createReminderSnooze(reminderId: string, lineUserId: string, remindAt: Date) {
+  await assertReminderOwnedByLineUser(reminderId, lineUserId);
+
+  const { error } = await supabase.from("reminder_snoozes").insert({
+    reminder_id: reminderId,
+    line_user_id: lineUserId,
+    remind_at: remindAt.toISOString()
+  });
+
+  if (error) {
+    if (error.code === "42P01") {
+      // The snooze table has not been created yet.
+      return false;
+    }
+    throw error;
+  }
+
+  return true;
+}
+
+export async function findDueReminderSnoozes(now: Date) {
+  const { data, error } = await supabase
+    .from("reminder_snoozes")
+    .select("id, reminder_id, line_user_id, remind_at")
+    .lte("remind_at", now.toISOString());
+
+  if (error) {
+    if (error.code === "42P01") {
+      return [] as ReminderSnoozeRow[];
+    }
+    throw error;
+  }
+
+  return (data ?? []) as ReminderSnoozeRow[];
+}
+
+export async function claimReminderSnooze(snoozeId: string) {
+  const { data, error } = await supabase
+    .from("reminder_snoozes")
+    .delete()
+    .eq("id", snoozeId)
+    .select("id");
+
+  if (error) {
+    if (error.code === "42P01") {
+      return false;
+    }
+    throw error;
+  }
+
+  // Delete-after-claim: only the invocation that actually deleted the row may push,
+  // so a snooze fires exactly once even with overlapping cron runs.
+  return (data ?? []).length > 0;
+}
+
+export async function findReminderForLineUser(reminderId: string, lineUserId: string) {
+  const { data, error } = await supabase
+    .from("reminders")
+    .select("id, title, time, days_of_week, enabled, action_label, kind, category, line_user_id")
+    .eq("id", reminderId)
+    .eq("line_user_id", lineUserId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return (data as ReminderRow | null) ?? null;
+}
+
+export async function setPendingEdit(reminderId: string, lineUserId: string) {
+  await assertReminderOwnedByLineUser(reminderId, lineUserId);
+
+  const { error } = await supabase.from("pending_edits").upsert(
+    {
+      line_user_id: lineUserId,
+      reminder_id: reminderId,
+      created_at: new Date().toISOString()
+    },
+    {
+      onConflict: "line_user_id"
+    }
+  );
+
+  if (error) {
+    if (error.code === "42P01") {
+      // The pending-edit table has not been created yet.
+      return false;
+    }
+    throw error;
+  }
+
+  return true;
+}
+
+export async function takePendingEdit(lineUserId: string) {
+  const { data, error } = await supabase
+    .from("pending_edits")
+    .delete()
+    .eq("line_user_id", lineUserId)
+    .select("line_user_id, reminder_id, created_at")
+    .maybeSingle();
+
+  if (error) {
+    if (error.code === "42P01") {
+      return null;
+    }
+    throw error;
+  }
+
+  return (data as PendingEditRow | null) ?? null;
+}
+
+export async function listDoseLogHistoryForLineUser(lineUserId: string) {
+  const { data: reminders, error: remindersError } = await supabase
+    .from("reminders")
+    .select("id, title")
+    .eq("line_user_id", lineUserId);
+
+  if (remindersError) {
+    throw remindersError;
+  }
+
+  const reminderRows = (reminders ?? []) as Array<{ id: string; title: string }>;
+  if (reminderRows.length === 0) {
+    return [] as DoseLogHistoryEntry[];
+  }
+
+  const titleByReminderId = new Map(
+    reminderRows.map((reminder) => [reminder.id, decryptPrivateText(reminder.title)])
+  );
+
+  const { data: logs, error: logsError } = await supabase
+    .from("dose_logs")
+    .select("id, reminder_id, taken_at")
+    .in(
+      "reminder_id",
+      reminderRows.map((reminder) => reminder.id)
+    )
+    .order("taken_at", { ascending: false })
+    .limit(10);
+
+  if (logsError) {
+    throw logsError;
+  }
+
+  return ((logs ?? []) as Array<{ id: string; reminder_id: string; taken_at: string }>).map((log) => ({
+    id: log.id,
+    taken_at: log.taken_at,
+    title: titleByReminderId.get(log.reminder_id) ?? "リマインダー"
+  })) as DoseLogHistoryEntry[];
 }

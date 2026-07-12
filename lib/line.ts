@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { messagingApi } from "@line/bot-sdk";
 import type { messagingApi as LineMessagingApi } from "@line/bot-sdk";
 import { getLineEnv } from "./env.js";
-import type { ReminderCategory, ReminderRow } from "./types.js";
+import type { DoseLogHistoryEntry, ReminderCategory, ReminderRow } from "./types.js";
 
 const lineEnv = getLineEnv();
 const lineClient = new messagingApi.MessagingApiClient({
@@ -101,6 +101,7 @@ function reminderFlexMessage(reminderId: string, actionLabel: string): LineMessa
         type: "box",
         layout: "vertical",
         paddingAll: "20px",
+        spacing: "sm",
         contents: [
           {
             type: "button",
@@ -112,6 +113,17 @@ function reminderFlexMessage(reminderId: string, actionLabel: string): LineMessa
               label: `${actionLabel}！`,
               data: postbackData,
               displayText: actionLabel
+            }
+          },
+          {
+            type: "button",
+            style: "secondary",
+            height: "sm",
+            action: {
+              type: "postback",
+              label: "あとで",
+              data: JSON.stringify({ type: "snooze-reminder", reminderId }),
+              displayText: "あとで"
             }
           }
         ]
@@ -348,7 +360,19 @@ function reminderListFlexMessage(reminders: ReminderRow[]): LineMessage {
           type: "box",
           layout: "vertical",
           paddingAll: "12px",
+          spacing: "sm",
           contents: [
+            {
+              type: "button",
+              style: "secondary",
+              height: "sm",
+              action: {
+                type: "postback",
+                label: "時間を変える",
+                data: JSON.stringify({ type: "edit-reminder-time", reminderId: reminder.id }),
+                displayText: "時間を変える"
+              }
+            },
             {
               type: "button",
               style: "secondary",
@@ -426,13 +450,115 @@ export async function replyReminderDeleted(replyToken: string) {
   });
 }
 
+export async function replySnoozed(replyToken: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: "わかったよ🌼\n15分くらいしたら、またそっと声かけるね。"
+      }
+    ]
+  });
+}
+
+export async function replyEditTimePrompt(replyToken: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: "新しい時間を送ってね🌱\n例：9:30"
+      }
+    ]
+  });
+}
+
+export async function replyTimeUpdated(replyToken: string, time: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: `変えたよ🌱\n${time}にお知らせするね。`
+      }
+    ]
+  });
+}
+
+export async function replyReminderNotFound(replyToken: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: "ごめんね、そのリマインダーが見つからなかったよ。\n「一覧」で確認してみてね🌱"
+      }
+    ]
+  });
+}
+
+export async function replyFeatureNotReady(replyToken: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: "ごめんね、この機能はまだ準備中みたい。\nもう少しだけ待っててね🌱"
+      }
+    ]
+  });
+}
+
+function formatTakenAtInTokyo(takenAt: string) {
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    month: "numeric",
+    day: "numeric",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date(takenAt));
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  const hour = String(Number(part("hour")));
+  return `${part("month")}/${part("day")}(${part("weekday")}) ${hour}:${part("minute")}`;
+}
+
+export async function replyDoseLogHistory(replyToken: string, entries: DoseLogHistoryEntry[]) {
+  if (entries.length === 0) {
+    await lineClient.replyMessage({
+      replyToken,
+      messages: [
+        {
+          type: "text",
+          text: "まだきろくはないよ。\nお知らせが届いたらボタンを押してね🌱"
+        }
+      ]
+    });
+    return;
+  }
+
+  const lines = entries.map((entry) => `${formatTakenAtInTokyo(entry.taken_at)} ✅ ${entry.title}`);
+
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: `最近のきろくだよ🌱\n\n${lines.join("\n")}`
+      }
+    ]
+  });
+}
+
 export async function replyUsage(replyToken: string) {
   await lineClient.replyMessage({
     replyToken,
     messages: [
       {
         type: "text",
-        text: "LINEだけで登録できるよ🌱\n\n例：\n重曹クエン酸水 8:00\n夜のおくすり 20:30\n\n確認が出たら「登録する」を押してね。\n一覧を見るときは「一覧」って送ってね。"
+        text: "LINEだけで登録できるよ🌱\n\n例：\n重曹クエン酸水 8:00\n夜のおくすり 20:30\n\n確認が出たら「登録する」を押してね。\n一覧を見るときは「一覧」って送ってね。\nきろくを見るときは「きろく」って送ってね。\nお知らせの「あとで」を押すと、15分後にもう一度お知らせするよ。\n一覧の「時間を変える」から時間も直せるよ。"
       }
     ]
   });
