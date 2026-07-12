@@ -196,6 +196,7 @@ supabase/20260712_add_snooze_edit_logs.sql
 ## 注意
 
 - 秘密情報は `.env` 管理し、コミットしない
+- リマインダー内容の暗号化鍵は、`ENCRYPTION_SECRET` 未設定時は `LINE_CHANNEL_SECRET` から導出される。`ENCRYPTION_SECRET`(任意)を設定すると鍵をLINEシークレットから切り離せる。設定しないまま `LINE_CHANNEL_SECRET` をローテーションすると保存済みタイトルが復号できなくなるので、先に `ENCRYPTION_SECRET` を設定すること
 - `ADMIN_PASSWORD` は長くランダムな文字列にする
 - 一時公開URLをSNSや公開チャットに貼らない
 - Webhook署名検証を実装済み

@@ -73,7 +73,9 @@ function parseTimeOnly(text: string): string | null {
 
 function parseReminderDraft(text: string): ReminderDraft | null {
   const trimmed = toHalfWidthDigits(text.trim());
-  const timeMatch = trimmed.match(/([01]?\d|2[0-3])\s*(?::|：|時)\s*(?:([0-5]?\d)\s*分?)?/);
+  // Lookarounds keep the hour/minute alternations from matching a substring of a
+  // longer digit run (e.g. the "4" in "24:00"), which would produce a bogus time.
+  const timeMatch = trimmed.match(/(?<!\d)([01]?\d|2[0-3])\s*(?::|：|時)\s*(?:([0-5]?\d)\s*分?)?(?!\d)/);
   if (!timeMatch) {
     return null;
   }

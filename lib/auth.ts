@@ -10,7 +10,7 @@ function unauthorizedResponse() {
   });
 }
 
-function safeEqualText(left: string, right: string) {
+export function safeEqualText(left: string, right: string) {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
 

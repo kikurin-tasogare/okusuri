@@ -8,7 +8,7 @@ import {
   hasReminderSendLog,
   recordReminderSendLog
 } from "../../lib/reminders.js";
-import { requireAdminAuth } from "../../lib/auth.js";
+import { requireAdminAuth, safeEqualText } from "../../lib/auth.js";
 import { ensureResponseHelpers, type VercelRequest, type VercelResponse } from "../../lib/vercel.js";
 
 function tokyoScheduledKey(now: Date) {
@@ -36,7 +36,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   });
   const adminAuthError = requireAdminAuth(request);
 
-  if (appEnv.cronSecret && auth !== `Bearer ${appEnv.cronSecret}` && adminAuthError) {
+  if (appEnv.cronSecret && !safeEqualText(auth ?? "", `Bearer ${appEnv.cronSecret}`) && adminAuthError) {
     response.status(401).json({ error: "Unauthorized" });
     return;
   }
