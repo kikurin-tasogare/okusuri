@@ -570,8 +570,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (data.type === "delete-reminder" && data.reminderId) {
           const { deleteReminderForLineUser } = await import("../../lib/reminders.js");
-          await deleteReminderForLineUser(data.reminderId, lineUserId);
-          await replyReminderDeleted(event.replyToken);
+          const deleted = await deleteReminderForLineUser(data.reminderId, lineUserId);
+          if (deleted) {
+            // The undo button carries the deleted content as a create-reminder
+            // postback, so tapping it re-registers through the existing path.
+            await replyReminderDeleted(event.replyToken, {
+              title: deleted.title,
+              time: deleted.time,
+              daysOfWeek: deleted.days_of_week,
+              category: deleted.category,
+              actionLabel: deleted.action_label === "やったよ" ? "やったよ" : "飲んだよ"
+            });
+          } else {
+            await replyReminderNotFound(event.replyToken);
+          }
         }
 
         if (data.type === "snooze-reminder" && data.reminderId) {

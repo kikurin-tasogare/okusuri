@@ -132,16 +132,22 @@ export async function deleteReminder(reminderId: string) {
   }
 }
 
+// Returns the deleted reminder (title decrypted) so the reply can offer an undo.
 export async function deleteReminderForLineUser(reminderId: string, lineUserId: string) {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("reminders")
     .delete()
     .eq("id", reminderId)
-    .eq("line_user_id", lineUserId);
+    .eq("line_user_id", lineUserId)
+    .select("id, title, time, days_of_week, enabled, action_label, kind, category, line_user_id")
+    .maybeSingle();
 
   if (error) {
     throw error;
   }
+
+  const row = data as ReminderRow | null;
+  return row ? { ...row, title: decryptPrivateText(row.title) } : null;
 }
 
 async function assertReminderOwnedByLineUser(reminderId: string, lineUserId: string) {

@@ -467,13 +467,75 @@ export async function replyReminderList(replyToken: string, reminders: ReminderR
   });
 }
 
-export async function replyReminderDeleted(replyToken: string) {
+export async function replyReminderDeleted(replyToken: string, deletedDraft?: ReminderDraft) {
+  if (!deletedDraft) {
+    await lineClient.replyMessage({
+      replyToken,
+      messages: [
+        {
+          type: "text",
+          text: "削除したよ🌱"
+        }
+      ]
+    });
+    return;
+  }
+
   await lineClient.replyMessage({
     replyToken,
     messages: [
       {
-        type: "text",
-        text: "削除したよ🌱"
+        type: "flex",
+        altText: "削除したよ🌱",
+        contents: {
+          type: "bubble",
+          size: "kilo",
+          styles: {
+            body: { backgroundColor: "#F8FFFC" },
+            footer: { backgroundColor: "#F8FFFC" }
+          },
+          body: {
+            type: "box",
+            layout: "vertical",
+            paddingAll: "22px",
+            spacing: "md",
+            contents: [
+              {
+                type: "text",
+                text: "削除したよ🌱",
+                size: "lg",
+                weight: "bold",
+                color: "#4F6469",
+                wrap: true
+              },
+              {
+                type: "text",
+                text: "まちがえて消しちゃったときは、下から戻せるよ。",
+                size: "sm",
+                color: "#7D9398",
+                wrap: true
+              }
+            ]
+          },
+          footer: {
+            type: "box",
+            layout: "vertical",
+            paddingAll: "18px",
+            contents: [
+              {
+                type: "button",
+                style: "secondary",
+                height: "sm",
+                action: {
+                  type: "postback",
+                  label: "もとに戻す",
+                  data: reminderDraftPostback(deletedDraft),
+                  displayText: "もとに戻す"
+                }
+              }
+            ]
+          }
+        }
       }
     ]
   });
