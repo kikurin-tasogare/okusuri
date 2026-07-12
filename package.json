@@ -1,0 +1,17 @@
+{
+  "name": "okusuri-line-reminder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^9.7.0",
+    "@supabase/supabase-js": "^2.53.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.10",
+    "typescript": "^5.8.3"
+  }
+}

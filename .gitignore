@@ -1,0 +1,11 @@
+.env
+.env.local
+.env.vercel
+.cron-secret.local
+supabase/*.local.sql
+.vercel
+node_modules
+.DS_Store
+.pnpm-store
+.tmp_excel
+outputs
