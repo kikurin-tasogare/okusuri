@@ -480,13 +480,89 @@ export async function replySnoozed(replyToken: string) {
   });
 }
 
+function timePickerQuickReply(postbackType: "reg-time" | "edit-time-pick"): LineMessagingApi.QuickReply {
+  return {
+    items: [
+      {
+        type: "action",
+        action: {
+          type: "datetimepicker",
+          label: "時間をえらぶ",
+          data: JSON.stringify({ type: postbackType }),
+          mode: "time"
+        }
+      }
+    ]
+  };
+}
+
+function registrationDaysQuickReply(): LineMessagingApi.QuickReply {
+  const presets: Array<{ label: string; days: number[] | null }> = [
+    { label: "毎日", days: null },
+    { label: "平日", days: [1, 2, 3, 4, 5] },
+    { label: "週末", days: [0, 6] },
+    ...[1, 2, 3, 4, 5, 6, 0].map((day) => ({ label: dayOfWeekLabels[day], days: [day] }))
+  ];
+
+  return {
+    items: presets.map((preset) => ({
+      type: "action" as const,
+      action: {
+        type: "postback" as const,
+        label: preset.label,
+        data: JSON.stringify({ type: "reg-days", days: preset.days }),
+        displayText: preset.label
+      }
+    }))
+  };
+}
+
+export async function replyAskTime(replyToken: string, title: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: `「${title}」を登録するね🪼\n何時にお知らせする？\n下の「時間をえらぶ」から選んでね。\n8:00 みたいに送ってもいいよ。`,
+        quickReply: timePickerQuickReply("reg-time")
+      }
+    ]
+  });
+}
+
+export async function replyAskDays(replyToken: string, time: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: `${time}だね🪼\nどの曜日にお知らせする？\n下から選んでね。\n「月水金」みたいに送ってもいいよ。`,
+        quickReply: registrationDaysQuickReply()
+      }
+    ]
+  });
+}
+
+export async function replyRestartRegistration(replyToken: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: "ごめんね、とちゅうでわからなくなっちゃった🪼\nもう一度、登録したい名前だけ送ってね。"
+      }
+    ]
+  });
+}
+
 export async function replyEditTimePrompt(replyToken: string) {
   await lineClient.replyMessage({
     replyToken,
     messages: [
       {
         type: "text",
-        text: "新しい時間を送ってね🌱\n例：9:30"
+        text: "新しい時間を送ってね🌱\n下の「時間をえらぶ」からも選べるよ。\n例：9:30",
+        quickReply: timePickerQuickReply("edit-time-pick")
       }
     ]
   });
@@ -576,7 +652,7 @@ export async function replyUsage(replyToken: string) {
     messages: [
       {
         type: "text",
-        text: "LINEだけで登録できるよ🌱\n\n例：\n重曹クエン酸水 8:00\n夜のおくすり 20:30\n\n確認が出たら「登録する」を押してね。\n一覧を見るときは「一覧」って送ってね。\nきろくを見るときは「きろく」って送ってね。\nお知らせの「あとで」を押すと、15分後にもう一度お知らせするよ。\n一覧の「時間を変える」から時間も直せるよ。"
+        text: "LINEだけで登録できるよ🌱\n\n例：\n重曹クエン酸水 8:00\n夜のおくすり 20:30\n\n名前だけ（例：おくすり）を送ると、\n時間と曜日をボタンで選べるよ。\n\n確認が出たら「登録する」を押してね。\n一覧を見るときは「一覧」って送ってね。\nきろくを見るときは「きろく」って送ってね。\nお知らせの「あとで」を押すと、15分後にもう一度お知らせするよ。\n一覧の「時間を変える」から時間も直せるよ。"
       }
     ]
   });

@@ -4,6 +4,7 @@ import type {
   DoseLogHistoryEntry,
   LineUserRow,
   PendingEditRow,
+  PendingRegistrationRow,
   ReminderAdminSummaryRow,
   ReminderCategory,
   ReminderKind,
@@ -373,6 +374,91 @@ export async function takePendingEdit(lineUserId: string) {
   }
 
   return (data as PendingEditRow | null) ?? null;
+}
+
+const pendingRegistrationColumns = "line_user_id, title, time, days_of_week, created_at";
+
+function decryptPendingRegistration(data: unknown) {
+  const row = data as PendingRegistrationRow | null;
+  return row ? { ...row, title: decryptPrivateText(row.title) } : null;
+}
+
+export async function setPendingRegistration(lineUserId: string, title: string, daysOfWeek: number[] | null) {
+  const { error } = await supabase.from("pending_registrations").upsert(
+    {
+      line_user_id: lineUserId,
+      title: encryptPrivateText(title),
+      time: null,
+      days_of_week: daysOfWeek,
+      created_at: new Date().toISOString()
+    },
+    {
+      onConflict: "line_user_id"
+    }
+  );
+
+  if (error) {
+    if (isMissingTableError(error)) {
+      // The pending-registration table has not been created yet.
+      return false;
+    }
+    throw error;
+  }
+
+  return true;
+}
+
+export async function getPendingRegistration(lineUserId: string) {
+  const { data, error } = await supabase
+    .from("pending_registrations")
+    .select(pendingRegistrationColumns)
+    .eq("line_user_id", lineUserId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingTableError(error)) {
+      return null;
+    }
+    throw error;
+  }
+
+  return decryptPendingRegistration(data);
+}
+
+export async function setPendingRegistrationTime(lineUserId: string, time: string) {
+  const { data, error } = await supabase
+    .from("pending_registrations")
+    .update({ time })
+    .eq("line_user_id", lineUserId)
+    .select(pendingRegistrationColumns)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingTableError(error)) {
+      return null;
+    }
+    throw error;
+  }
+
+  return decryptPendingRegistration(data);
+}
+
+export async function takePendingRegistration(lineUserId: string) {
+  const { data, error } = await supabase
+    .from("pending_registrations")
+    .delete()
+    .eq("line_user_id", lineUserId)
+    .select(pendingRegistrationColumns)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingTableError(error)) {
+      return null;
+    }
+    throw error;
+  }
+
+  return decryptPendingRegistration(data);
 }
 
 export async function listDoseLogHistoryForLineUser(lineUserId: string) {

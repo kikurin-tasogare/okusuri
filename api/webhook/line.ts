@@ -1,4 +1,6 @@
 import {
+  replyAskDays,
+  replyAskTime,
   replyDoseLogHistory,
   replyEditTimePrompt,
   replyFeatureNotReady,
@@ -9,6 +11,7 @@ import {
   replyReminderDeleted,
   replyReminderList,
   replyReminderNotFound,
+  replyRestartRegistration,
   replySnoozed,
   replyTimeUpdated,
   replyUsage,
@@ -16,7 +19,7 @@ import {
   type ReminderDraft
 } from "../../lib/line.js";
 import { ensureResponseHelpers, readRawBody, type VercelRequest, type VercelResponse } from "../../lib/vercel.js";
-import type { PendingEditRow, ReminderCategory } from "../../lib/types.js";
+import type { PendingEditRow, PendingRegistrationRow, ReminderCategory } from "../../lib/types.js";
 
 const pendingEditTtlMs = 10 * 60 * 1000;
 const snoozeDelayMs = 15 * 60 * 1000;
@@ -26,7 +29,7 @@ type LineEvent = {
   replyToken: string;
   source?: { userId?: string };
   message?: { type?: string; text?: string };
-  postback?: { data?: string };
+  postback?: { data?: string; params?: { date?: string; time?: string; datetime?: string } };
 };
 
 async function saveLineUser(lineUserId: string) {
@@ -46,6 +49,49 @@ async function takePendingEditSafely(lineUserId: string): Promise<PendingEditRow
     // Supabase may not be configured yet: treat it as "no pending edit".
     return null;
   }
+}
+
+async function getPendingRegistrationSafely(lineUserId: string): Promise<PendingRegistrationRow | null> {
+  try {
+    const { getPendingRegistration } = await import("../../lib/reminders.js");
+    return await getPendingRegistration(lineUserId);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function setPendingRegistrationSafely(lineUserId: string, title: string, daysOfWeek: number[] | null) {
+  try {
+    const { setPendingRegistration } = await import("../../lib/reminders.js");
+    return await setPendingRegistration(lineUserId, title, daysOfWeek);
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function setPendingRegistrationTimeSafely(
+  lineUserId: string,
+  time: string
+): Promise<PendingRegistrationRow | null> {
+  try {
+    const { setPendingRegistrationTime } = await import("../../lib/reminders.js");
+    return await setPendingRegistrationTime(lineUserId, time);
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function takePendingRegistrationSafely(lineUserId: string): Promise<PendingRegistrationRow | null> {
+  try {
+    const { takePendingRegistration } = await import("../../lib/reminders.js");
+    return await takePendingRegistration(lineUserId);
+  } catch (_error) {
+    return null;
+  }
+}
+
+function isPendingFresh(createdAt: string) {
+  return Date.now() - new Date(createdAt).getTime() <= pendingEditTtlMs;
 }
 
 function inferCategory(title: string): ReminderCategory {
@@ -155,6 +201,82 @@ function parseReminderDraft(text: string): ReminderDraft | null {
   };
 }
 
+function reminderDraftFromParts(title: string, time: string, daysOfWeek: number[] | null): ReminderDraft {
+  const category = inferCategory(title);
+  return {
+    title,
+    time,
+    daysOfWeek,
+    category,
+    actionLabel: category === "other" ? "やったよ" : "飲んだよ"
+  };
+}
+
+function normalizeDays(days: number[]) {
+  const uniqueDays = [...new Set(days)].sort((a, b) => a - b);
+  return uniqueDays.length === 0 || uniqueDays.length === 7 ? null : uniqueDays;
+}
+
+// A message with no time in it can still start a guided registration: the title
+// (and optionally day tokens) are kept, and the bot asks for the rest step by step.
+function parseTitleOnly(text: string): { title: string; daysOfWeek: number[] | null } | null {
+  const trimmed = toHalfWidthDigits(text.trim());
+  if (!trimmed) {
+    return null;
+  }
+
+  const days: number[] = [];
+  const titleParts: string[] = [];
+  for (const token of trimmed.split(/\s+/)) {
+    if (!token) {
+      continue;
+    }
+    const tokenDays = parseDayOfWeekToken(token);
+    if (tokenDays) {
+      days.push(...tokenDays);
+    } else {
+      titleParts.push(token);
+    }
+  }
+
+  const title = titleParts
+    .join(" ")
+    .replace(/登録|リマインダー|通知|して|ください|お願い|毎日/g, "")
+    .replace(/^[\s、。・:：-]+|[\s、。・:：-]+$/g, "")
+    .slice(0, 40);
+
+  if (!title) {
+    return null;
+  }
+
+  return { title, daysOfWeek: normalizeDays(days) };
+}
+
+// Returns undefined when the text is not a days-only message; null means every day.
+function parseDaysOnly(text: string): number[] | null | undefined {
+  const trimmed = toHalfWidthDigits(text.trim());
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const days: number[] = [];
+  for (const token of trimmed.split(/\s+/)) {
+    if (!token) {
+      continue;
+    }
+    if (token === "毎日") {
+      continue;
+    }
+    const tokenDays = parseDayOfWeekToken(token);
+    if (!tokenDays) {
+      return undefined;
+    }
+    days.push(...tokenDays);
+  }
+
+  return normalizeDays(days);
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const response = ensureResponseHelpers(res);
 
@@ -208,6 +330,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // already cleared, so fall through to normal message handling.
         }
 
+        // Commands always win over a half-finished guided registration.
+        if (/^(一覧|リスト|確認|きろく|記録|ログ|使い方|ヘルプ|help|登録)$/.test(text)) {
+          await takePendingRegistrationSafely(lineUserId);
+        }
+
         if (/^(一覧|リスト|確認)$/.test(text)) {
           const { listRemindersForLineUser } = await import("../../lib/reminders.js");
           await replyReminderList(event.replyToken, await listRemindersForLineUser(lineUserId));
@@ -227,7 +354,52 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const draft = parseReminderDraft(text);
         if (draft) {
+          // A complete one-shot registration replaces any half-finished guided one.
+          await takePendingRegistrationSafely(lineUserId);
           await replyRegistrationConfirm(event.replyToken, draft);
+          continue;
+        }
+
+        const pendingRegistration = await getPendingRegistrationSafely(lineUserId);
+        if (pendingRegistration && isPendingFresh(pendingRegistration.created_at)) {
+          if (!pendingRegistration.time) {
+            const time = parseTimeOnly(text);
+            if (time) {
+              const updated = await setPendingRegistrationTimeSafely(lineUserId, time);
+              if (!updated) {
+                await replyRestartRegistration(event.replyToken);
+              } else if (updated.days_of_week && updated.days_of_week.length > 0) {
+                // Days were given up front ("平日 おくすり"): nothing left to ask.
+                await takePendingRegistrationSafely(lineUserId);
+                await replyRegistrationConfirm(
+                  event.replyToken,
+                  reminderDraftFromParts(updated.title, time, updated.days_of_week)
+                );
+              } else {
+                await replyAskDays(event.replyToken, time);
+              }
+              continue;
+            }
+          } else {
+            const days = parseDaysOnly(text);
+            if (days !== undefined) {
+              await takePendingRegistrationSafely(lineUserId);
+              await replyRegistrationConfirm(
+                event.replyToken,
+                reminderDraftFromParts(pendingRegistration.title, pendingRegistration.time, days)
+              );
+              continue;
+            }
+          }
+          // Any other text falls through: it may start a new guided registration below.
+        } else if (pendingRegistration) {
+          // Too old: forget it and treat the message normally.
+          await takePendingRegistrationSafely(lineUserId);
+        }
+
+        const titleOnly = parseTitleOnly(text);
+        if (titleOnly && (await setPendingRegistrationSafely(lineUserId, titleOnly.title, titleOnly.daysOfWeek))) {
+          await replyAskTime(event.replyToken, titleOnly.title);
           continue;
         }
 
@@ -241,10 +413,66 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           reminderId?: string;
           title?: string;
           time?: string;
+          days?: unknown;
           daysOfWeek?: unknown;
           category?: ReminderCategory;
           actionLabel?: "飲んだよ" | "やったよ";
         };
+
+        if (data.type === "reg-time" && event.postback.params?.time) {
+          const time = event.postback.params.time;
+          const pending = await getPendingRegistrationSafely(lineUserId);
+          if (!pending || !isPendingFresh(pending.created_at)) {
+            await takePendingRegistrationSafely(lineUserId);
+            await replyRestartRegistration(event.replyToken);
+          } else {
+            const updated = await setPendingRegistrationTimeSafely(lineUserId, time);
+            if (!updated) {
+              await replyRestartRegistration(event.replyToken);
+            } else if (updated.days_of_week && updated.days_of_week.length > 0) {
+              await takePendingRegistrationSafely(lineUserId);
+              await replyRegistrationConfirm(
+                event.replyToken,
+                reminderDraftFromParts(updated.title, time, updated.days_of_week)
+              );
+            } else {
+              await replyAskDays(event.replyToken, time);
+            }
+          }
+        }
+
+        if (data.type === "reg-days") {
+          const days =
+            Array.isArray(data.days) &&
+            data.days.length > 0 &&
+            data.days.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+              ? (data.days as number[])
+              : null;
+          const pending = await takePendingRegistrationSafely(lineUserId);
+          if (pending && pending.time && isPendingFresh(pending.created_at)) {
+            await replyRegistrationConfirm(
+              event.replyToken,
+              reminderDraftFromParts(pending.title, pending.time, days)
+            );
+          } else {
+            await replyRestartRegistration(event.replyToken);
+          }
+        }
+
+        if (data.type === "edit-time-pick" && event.postback.params?.time) {
+          const time = event.postback.params.time;
+          const pendingEdit = await takePendingEditSafely(lineUserId);
+          if (pendingEdit && isPendingFresh(pendingEdit.created_at)) {
+            const { updateReminderTimeForLineUser } = await import("../../lib/reminders.js");
+            if (await updateReminderTimeForLineUser(pendingEdit.reminder_id, lineUserId, time)) {
+              await replyTimeUpdated(event.replyToken, time);
+            } else {
+              await replyReminderNotFound(event.replyToken);
+            }
+          } else {
+            await replyReminderNotFound(event.replyToken);
+          }
+        }
         if (data.type === "record-reminder" && data.reminderId) {
           const { recordReminder } = await import("../../lib/reminders.js");
           await recordReminder(data.reminderId, lineUserId);

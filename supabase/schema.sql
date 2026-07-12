@@ -48,9 +48,19 @@ create table if not exists public.pending_edits (
   created_at timestamptz not null default now()
 );
 
+-- title には reminders.title と同じく暗号化した値を保存します。
+create table if not exists public.pending_registrations (
+  line_user_id text primary key references public.line_users(line_user_id) on delete cascade,
+  title text not null,
+  time text null,
+  days_of_week int[] null,
+  created_at timestamptz not null default now()
+);
+
 alter table public.line_users enable row level security;
 alter table public.reminders enable row level security;
 alter table public.dose_logs enable row level security;
 alter table public.reminder_send_logs enable row level security;
 alter table public.reminder_snoozes enable row level security;
 alter table public.pending_edits enable row level security;
+alter table public.pending_registrations enable row level security;

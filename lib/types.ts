@@ -48,6 +48,14 @@ export type PendingEditRow = {
   created_at: string;
 };
 
+export type PendingRegistrationRow = {
+  line_user_id: string;
+  title: string;
+  time: string | null;
+  days_of_week: number[] | null;
+  created_at: string;
+};
+
 export type DoseLogHistoryEntry = {
   id: string;
   taken_at: string;
