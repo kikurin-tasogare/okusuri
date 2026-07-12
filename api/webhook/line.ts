@@ -37,8 +37,10 @@ function inferCategory(title: string): ReminderCategory {
 }
 
 function parseReminderDraft(text: string): ReminderDraft | null {
-  const trimmed = text.trim();
-  const timeMatch = trimmed.match(/([01]?\d|2[0-3])\s*(?::|：|時)\s*([0-5]\d)?/);
+  const trimmed = text
+    .trim()
+    .replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+  const timeMatch = trimmed.match(/([01]?\d|2[0-3])\s*(?::|：|時)\s*(?:([0-5]?\d)\s*分?)?/);
   if (!timeMatch) {
     return null;
   }
@@ -91,83 +93,87 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       continue;
     }
 
-    if (event.type === "follow") {
-      await saveLineUser(lineUserId);
-      await replyLinked(event.replyToken);
-      continue;
-    }
-
-    if (event.type === "message" && event.message?.type === "text") {
-      await saveLineUser(lineUserId);
-      const text = event.message.text?.trim() ?? "";
-
-      if (/^(一覧|リスト|確認)$/.test(text)) {
-        const { listRemindersForLineUser } = await import("../../lib/reminders.js");
-        await replyReminderList(event.replyToken, await listRemindersForLineUser(lineUserId));
+    try {
+      if (event.type === "follow") {
+        await saveLineUser(lineUserId);
+        await replyLinked(event.replyToken, lineUserId);
         continue;
       }
 
-      if (/^(使い方|ヘルプ|help|登録)$/.test(text)) {
+      if (event.type === "message" && event.message?.type === "text") {
+        await saveLineUser(lineUserId);
+        const text = event.message.text?.trim() ?? "";
+
+        if (/^(一覧|リスト|確認)$/.test(text)) {
+          const { listRemindersForLineUser } = await import("../../lib/reminders.js");
+          await replyReminderList(event.replyToken, await listRemindersForLineUser(lineUserId));
+          continue;
+        }
+
+        if (/^(使い方|ヘルプ|help|登録)$/.test(text)) {
+          await replyUsage(event.replyToken);
+          continue;
+        }
+
+        const draft = parseReminderDraft(text);
+        if (draft) {
+          await replyRegistrationConfirm(event.replyToken, draft);
+          continue;
+        }
+
         await replyUsage(event.replyToken);
         continue;
       }
 
-      const draft = parseReminderDraft(text);
-      if (draft) {
-        await replyRegistrationConfirm(event.replyToken, draft);
-        continue;
-      }
+      if (event.type === "postback" && event.postback?.data) {
+        const data = JSON.parse(event.postback.data) as {
+          type?: string;
+          reminderId?: string;
+          title?: string;
+          time?: string;
+          category?: ReminderCategory;
+          actionLabel?: "飲んだよ" | "やったよ";
+        };
+        if (data.type === "record-reminder" && data.reminderId) {
+          const { recordReminder } = await import("../../lib/reminders.js");
+          await recordReminder(data.reminderId, lineUserId);
+          await replyRecorded(event.replyToken);
+        }
 
-      await replyUsage(event.replyToken);
-      continue;
-    }
+        if (
+          data.type === "create-reminder" &&
+          data.title &&
+          data.time &&
+          data.category &&
+          data.actionLabel
+        ) {
+          const { createReminder } = await import("../../lib/reminders.js");
+          await createReminder({
+            title: data.title,
+            time: data.time,
+            daysOfWeek: null,
+            enabled: true,
+            actionLabel: data.actionLabel,
+            kind: data.category === "other" ? "task" : "drink",
+            category: data.category,
+            lineUserId
+          });
+          await replyRegistrationDone(event.replyToken, {
+            title: data.title,
+            time: data.time,
+            category: data.category,
+            actionLabel: data.actionLabel
+          });
+        }
 
-    if (event.type === "postback" && event.postback?.data) {
-      const data = JSON.parse(event.postback.data) as {
-        type?: string;
-        reminderId?: string;
-        title?: string;
-        time?: string;
-        category?: ReminderCategory;
-        actionLabel?: "飲んだよ" | "やったよ";
-      };
-      if (data.type === "record-reminder" && data.reminderId) {
-        const { recordReminder } = await import("../../lib/reminders.js");
-        await recordReminder(data.reminderId, lineUserId);
-        await replyRecorded(event.replyToken);
+        if (data.type === "delete-reminder" && data.reminderId) {
+          const { deleteReminderForLineUser } = await import("../../lib/reminders.js");
+          await deleteReminderForLineUser(data.reminderId, lineUserId);
+          await replyReminderDeleted(event.replyToken);
+        }
       }
-
-      if (
-        data.type === "create-reminder" &&
-        data.title &&
-        data.time &&
-        data.category &&
-        data.actionLabel
-      ) {
-        const { createReminder } = await import("../../lib/reminders.js");
-        await createReminder({
-          title: data.title,
-          time: data.time,
-          daysOfWeek: null,
-          enabled: true,
-          actionLabel: data.actionLabel,
-          kind: data.category === "other" ? "task" : "drink",
-          category: data.category,
-          lineUserId
-        });
-        await replyRegistrationDone(event.replyToken, {
-          title: data.title,
-          time: data.time,
-          category: data.category,
-          actionLabel: data.actionLabel
-        });
-      }
-
-      if (data.type === "delete-reminder" && data.reminderId) {
-        const { deleteReminderForLineUser } = await import("../../lib/reminders.js");
-        await deleteReminderForLineUser(data.reminderId, lineUserId);
-        await replyReminderDeleted(event.replyToken);
-      }
+    } catch (error) {
+      console.error("LINE webhook event handling failed", error);
     }
   }
 

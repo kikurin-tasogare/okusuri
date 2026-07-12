@@ -51,8 +51,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       continue;
     }
 
+    // Claim the reminder/minute slot before pushing so that overlapping cron
+    // invocations cannot both send (the unique constraint arbitrates).
+    const claimed = await recordReminderSendLog(reminder.id, scheduledKey);
+    if (!claimed) {
+      skipped += 1;
+      continue;
+    }
+
     await pushReminder(reminder.line_user_id, reminder.id, reminder.title, reminder.action_label);
-    await recordReminderSendLog(reminder.id, scheduledKey);
     sent += 1;
   }
 

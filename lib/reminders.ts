@@ -171,11 +171,19 @@ export async function recordReminderSendLog(reminderId: string, scheduledKey: st
   });
 
   if (error) {
-    if (error.code === "42P01" || error.code === "23505") {
-      return;
+    if (error.code === "42P01") {
+      // The send-log table has not been created yet: dedupe is unavailable,
+      // so let the caller proceed with sending (same behavior as before the table existed).
+      return true;
+    }
+    if (error.code === "23505") {
+      // Another invocation already claimed this reminder/minute slot.
+      return false;
     }
     throw error;
   }
+
+  return true;
 }
 
 export async function findDueReminders(now: Date) {

@@ -462,5 +462,12 @@ export function verifyLineSignature(rawBody: string, signature: string | undefin
     .update(rawBody)
     .digest("base64");
 
-  return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(signature));
+  const digestBuffer = Buffer.from(digest);
+  const signatureBuffer = Buffer.from(signature);
+
+  if (digestBuffer.length !== signatureBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(digestBuffer, signatureBuffer);
 }
