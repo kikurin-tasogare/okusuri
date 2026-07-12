@@ -56,22 +56,6 @@ function reminderFlexMessage(reminderId: string, actionLabel: string): LineMessa
         spacing: "md",
         contents: [
           {
-            type: "box",
-            layout: "vertical",
-            backgroundColor: "#EAFBF7",
-            cornerRadius: "xxl",
-            paddingAll: "16px",
-            contents: [
-              {
-                type: "text",
-                text: "🌱 小さな相棒から",
-                size: "sm",
-                color: "#79BFB4",
-                weight: "bold"
-              }
-            ]
-          },
-          {
             type: "text",
             text: "祐希ちゃん、そろそろだよ",
             size: "lg",
@@ -98,7 +82,7 @@ function reminderFlexMessage(reminderId: string, actionLabel: string): LineMessa
             contents: [
               {
                 type: "text",
-                text: "そっと見守ってるよ🌼",
+                text: "そっと見守ってるよ🪼",
                 size: "md",
                 color: "#4F6469",
                 weight: "bold",
