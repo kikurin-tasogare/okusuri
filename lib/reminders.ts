@@ -11,6 +11,12 @@ import type {
   ReminderSnoozeRow
 } from "./types.js";
 
+// A missing table surfaces as PGRST205 ("could not find the table in the schema
+// cache") through Supabase's REST layer, not as Postgres's raw 42P01.
+function isMissingTableError(error: { code?: string }) {
+  return error.code === "42P01" || error.code === "PGRST205";
+}
+
 export async function upsertLineUser(lineUserId: string) {
   const { error } = await supabase.from("line_users").upsert(
     {
@@ -183,7 +189,7 @@ export async function hasReminderSendLog(reminderId: string, scheduledKey: strin
     .maybeSingle();
 
   if (error) {
-    if (error.code === "42P01") {
+    if (isMissingTableError(error)) {
       return false;
     }
     throw error;
@@ -199,7 +205,7 @@ export async function recordReminderSendLog(reminderId: string, scheduledKey: st
   });
 
   if (error) {
-    if (error.code === "42P01") {
+    if (isMissingTableError(error)) {
       // The send-log table has not been created yet: dedupe is unavailable,
       // so let the caller proceed with sending (same behavior as before the table existed).
       return true;
@@ -266,7 +272,7 @@ export async function createReminderSnooze(reminderId: string, lineUserId: strin
   });
 
   if (error) {
-    if (error.code === "42P01") {
+    if (isMissingTableError(error)) {
       // The snooze table has not been created yet.
       return false;
     }
@@ -283,7 +289,7 @@ export async function findDueReminderSnoozes(now: Date) {
     .lte("remind_at", now.toISOString());
 
   if (error) {
-    if (error.code === "42P01") {
+    if (isMissingTableError(error)) {
       return [] as ReminderSnoozeRow[];
     }
     throw error;
@@ -300,7 +306,7 @@ export async function claimReminderSnooze(snoozeId: string) {
     .select("id");
 
   if (error) {
-    if (error.code === "42P01") {
+    if (isMissingTableError(error)) {
       return false;
     }
     throw error;
@@ -341,7 +347,7 @@ export async function setPendingEdit(reminderId: string, lineUserId: string) {
   );
 
   if (error) {
-    if (error.code === "42P01") {
+    if (isMissingTableError(error)) {
       // The pending-edit table has not been created yet.
       return false;
     }
@@ -360,7 +366,7 @@ export async function takePendingEdit(lineUserId: string) {
     .maybeSingle();
 
   if (error) {
-    if (error.code === "42P01") {
+    if (isMissingTableError(error)) {
       return null;
     }
     throw error;
