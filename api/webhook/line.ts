@@ -71,6 +71,39 @@ function parseTimeOnly(text: string): string | null {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+const dayOfWeekKanji = "日月火水木金土";
+
+// Day-of-week tokens are matched only as whole whitespace-delimited tokens, so a
+// day kanji inside a longer word (日記, 毎日, 水…) never turns into a schedule.
+// Returns the days the token names, or null when the token is not a day token.
+function parseDayOfWeekToken(token: string): number[] | null {
+  const bare = token.startsWith("毎週") ? token.slice("毎週".length) : token;
+  if (!bare) {
+    // A standalone 毎週 just marks the schedule; it adds no days on its own.
+    return [];
+  }
+  if (bare === "平日") {
+    return [1, 2, 3, 4, 5];
+  }
+  if (bare === "週末") {
+    return [0, 6];
+  }
+  const single = bare.match(/^([日月火水木金土])曜日?$/);
+  if (single) {
+    return [dayOfWeekKanji.indexOf(single[1])];
+  }
+  const listParts = bare.split(/[・、,]/);
+  if (listParts.length >= 2 && listParts.every((part) => /^[日月火水木金土](?:曜日?)?$/.test(part))) {
+    return listParts.map((part) => dayOfWeekKanji.indexOf(part[0]));
+  }
+  // A compact run of bare day kanji (月水金, 土日, …). A single bare kanji is too
+  // ambiguous (水 is a drink, 月 is the moon) and needs 曜/曜日 to count as a day.
+  if (bare.length >= 2 && [...bare].every((kanji) => dayOfWeekKanji.includes(kanji))) {
+    return [...bare].map((kanji) => dayOfWeekKanji.indexOf(kanji));
+  }
+  return null;
+}
+
 function parseReminderDraft(text: string): ReminderDraft | null {
   const trimmed = toHalfWidthDigits(text.trim());
   // Lookarounds keep the hour/minute alternations from matching a substring of a
@@ -83,8 +116,26 @@ function parseReminderDraft(text: string): ReminderDraft | null {
   const hour = Number(timeMatch[1]);
   const minute = timeMatch[2] ? Number(timeMatch[2]) : 0;
   const time = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
-  const title = trimmed
-    .replace(timeMatch[0], "")
+
+  const days: number[] = [];
+  const titleParts: string[] = [];
+  for (const token of trimmed.replace(timeMatch[0], "").split(/\s+/)) {
+    if (!token) {
+      continue;
+    }
+    const tokenDays = parseDayOfWeekToken(token);
+    if (tokenDays) {
+      days.push(...tokenDays);
+    } else {
+      titleParts.push(token);
+    }
+  }
+  const uniqueDays = [...new Set(days)].sort((a, b) => a - b);
+  // All seven days spelled out is the same as the everyday default (null).
+  const daysOfWeek = uniqueDays.length === 0 || uniqueDays.length === 7 ? null : uniqueDays;
+
+  const title = titleParts
+    .join(" ")
     .replace(/登録|リマインダー|通知|して|ください|お願い|毎日/g, "")
     .replace(/^[\s、。・:：-]+|[\s、。・:：-]+$/g, "")
     .slice(0, 40);
@@ -98,6 +149,7 @@ function parseReminderDraft(text: string): ReminderDraft | null {
   return {
     title,
     time,
+    daysOfWeek,
     category,
     actionLabel: category === "other" ? "やったよ" : "飲んだよ"
   };
@@ -189,6 +241,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           reminderId?: string;
           title?: string;
           time?: string;
+          daysOfWeek?: unknown;
           category?: ReminderCategory;
           actionLabel?: "飲んだよ" | "やったよ";
         };
@@ -206,10 +259,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           data.actionLabel
         ) {
           const { createReminder } = await import("../../lib/reminders.js");
+          const daysOfWeek =
+            Array.isArray(data.daysOfWeek) &&
+            data.daysOfWeek.length > 0 &&
+            data.daysOfWeek.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+              ? (data.daysOfWeek as number[])
+              : null;
           await createReminder({
             title: data.title,
             time: data.time,
-            daysOfWeek: null,
+            daysOfWeek,
             enabled: true,
             actionLabel: data.actionLabel,
             kind: data.category === "other" ? "task" : "drink",
@@ -219,6 +278,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await replyRegistrationDone(event.replyToken, {
             title: data.title,
             time: data.time,
+            daysOfWeek,
             category: data.category,
             actionLabel: data.actionLabel
           });

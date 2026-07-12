@@ -14,9 +14,20 @@ type LineMessage = LineMessagingApi.Message;
 export type ReminderDraft = {
   title: string;
   time: string;
+  daysOfWeek: number[] | null;
   category: ReminderCategory;
   actionLabel: "飲んだよ" | "やったよ";
 };
+
+const dayOfWeekLabels = ["日", "月", "火", "水", "木", "金", "土"];
+
+function formatDaysOfWeek(daysOfWeek: number[]) {
+  return [...daysOfWeek]
+    .sort((a, b) => a - b)
+    .map((day) => dayOfWeekLabels[day])
+    .filter(Boolean)
+    .join("・");
+}
 
 function reminderFlexMessage(reminderId: string, actionLabel: string): LineMessage {
   const postbackData = JSON.stringify({
@@ -191,6 +202,7 @@ function reminderDraftPostback(draft: ReminderDraft) {
     type: "create-reminder",
     title: draft.title,
     time: draft.time,
+    daysOfWeek: draft.daysOfWeek,
     category: draft.category,
     actionLabel: draft.actionLabel
   });
@@ -246,10 +258,14 @@ function registrationConfirmFlexMessage(draft: ReminderDraft): LineMessage {
               },
               {
                 type: "text",
-                text: "毎日お知らせするよ",
+                text:
+                  draft.daysOfWeek && draft.daysOfWeek.length > 0
+                    ? `毎週 ${formatDaysOfWeek(draft.daysOfWeek)} にお知らせするよ`
+                    : "毎日お知らせするよ",
                 size: "sm",
                 color: "#7D9398",
-                margin: "sm"
+                margin: "sm",
+                wrap: true
               }
             ]
           }
@@ -278,9 +294,17 @@ function registrationConfirmFlexMessage(draft: ReminderDraft): LineMessage {
 }
 
 function registrationDoneFlexMessage(draft: ReminderDraft): LineMessage {
+  const scheduleText =
+    draft.daysOfWeek && draft.daysOfWeek.length > 0
+      ? `毎週 ${formatDaysOfWeek(draft.daysOfWeek)} の${draft.time}にそっとお知らせするね。`
+      : `${draft.time}にそっとお知らせするね。`;
+
   return {
     type: "flex",
-    altText: `登録したよ。${draft.time}にお知らせするね。`,
+    altText:
+      draft.daysOfWeek && draft.daysOfWeek.length > 0
+        ? `登録したよ。毎週 ${formatDaysOfWeek(draft.daysOfWeek)} の${draft.time}にお知らせするね。`
+        : `登録したよ。${draft.time}にお知らせするね。`,
     contents: {
       type: "bubble",
       size: "kilo",
@@ -302,7 +326,7 @@ function registrationDoneFlexMessage(draft: ReminderDraft): LineMessage {
           },
           {
             type: "text",
-            text: `${draft.time}にそっとお知らせするね。`,
+            text: scheduleText,
             size: "md",
             color: "#6F858A",
             wrap: true
@@ -353,7 +377,17 @@ function reminderListFlexMessage(reminders: ReminderRow[]): LineMessage {
               size: "xl",
               weight: "bold",
               color: "#6CC8BB"
-            }
+            },
+            ...(reminder.days_of_week && reminder.days_of_week.length > 0
+              ? [
+                  {
+                    type: "text" as const,
+                    text: formatDaysOfWeek(reminder.days_of_week),
+                    size: "xs",
+                    color: "#7D9398"
+                  }
+                ]
+              : [])
           ]
         },
         footer: {
