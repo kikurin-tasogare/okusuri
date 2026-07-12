@@ -397,6 +397,17 @@ function reminderListFlexMessage(reminders: ReminderRow[]): LineMessage {
               height: "sm",
               action: {
                 type: "postback",
+                label: "曜日を変える",
+                data: JSON.stringify({ type: "edit-reminder-days", reminderId: reminder.id }),
+                displayText: "曜日を変える"
+              }
+            },
+            {
+              type: "button",
+              style: "secondary",
+              height: "sm",
+              action: {
+                type: "postback",
                 label: "削除する",
                 data: JSON.stringify({ type: "delete-reminder", reminderId: reminder.id }),
                 displayText: "削除する"
@@ -496,7 +507,7 @@ function timePickerQuickReply(postbackType: "reg-time" | "edit-time-pick"): Line
   };
 }
 
-function registrationDaysQuickReply(): LineMessagingApi.QuickReply {
+function daysQuickReply(postbackType: "reg-days" | "edit-days"): LineMessagingApi.QuickReply {
   const presets: Array<{ label: string; days: number[] | null }> = [
     { label: "毎日", days: null },
     { label: "平日", days: [1, 2, 3, 4, 5] },
@@ -510,7 +521,7 @@ function registrationDaysQuickReply(): LineMessagingApi.QuickReply {
       action: {
         type: "postback" as const,
         label: preset.label,
-        data: JSON.stringify({ type: "reg-days", days: preset.days }),
+        data: JSON.stringify({ type: postbackType, days: preset.days }),
         displayText: preset.label
       }
     }))
@@ -537,7 +548,7 @@ export async function replyAskDays(replyToken: string, time: string) {
       {
         type: "text",
         text: `${time}だね🪼\nどの曜日にお知らせする？\n下から選んでね。\n「月水金」みたいに送ってもいいよ。`,
-        quickReply: registrationDaysQuickReply()
+        quickReply: daysQuickReply("reg-days")
       }
     ]
   });
@@ -563,6 +574,36 @@ export async function replyEditTimePrompt(replyToken: string) {
         type: "text",
         text: "新しい時間を送ってね🌱\n下の「時間をえらぶ」からも選べるよ。\n例：9:30",
         quickReply: timePickerQuickReply("edit-time-pick")
+      }
+    ]
+  });
+}
+
+export async function replyEditDaysPrompt(replyToken: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: "どの曜日にお知らせする？🌱\n下から選んでね。\n「月水金」みたいに送ってもいいよ。",
+        quickReply: daysQuickReply("edit-days")
+      }
+    ]
+  });
+}
+
+export async function replyDaysUpdated(replyToken: string, daysOfWeek: number[] | null) {
+  const scheduleText =
+    daysOfWeek && daysOfWeek.length > 0
+      ? `毎週 ${formatDaysOfWeek(daysOfWeek)} にお知らせするね。`
+      : "毎日お知らせするね。";
+
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: `変えたよ🌱\n${scheduleText}`
       }
     ]
   });
@@ -652,7 +693,7 @@ export async function replyUsage(replyToken: string) {
     messages: [
       {
         type: "text",
-        text: "LINEだけで登録できるよ🌱\n\n例：\n重曹クエン酸水 8:00\n夜のおくすり 20:30\n\n名前だけ（例：おくすり）を送ると、\n時間と曜日をボタンで選べるよ。\n\n確認が出たら「登録する」を押してね。\n一覧を見るときは「一覧」って送ってね。\nきろくを見るときは「きろく」って送ってね。\nお知らせの「あとで」を押すと、15分後にもう一度お知らせするよ。\n一覧の「時間を変える」から時間も直せるよ。"
+        text: "LINEだけで登録できるよ🌱\n\n例：\n重曹クエン酸水 8:00\n夜のおくすり 20:30\n\n名前だけ（例：おくすり）を送ると、\n時間と曜日をボタンで選べるよ。\n\n確認が出たら「登録する」を押してね。\n一覧を見るときは「一覧」って送ってね。\nきろくを見るときは「きろく」って送ってね。\nお知らせの「あとで」を押すと、15分後にもう一度お知らせするよ。\n一覧の「時間を変える」から時間も直せるよ。\n一覧の「曜日を変える」から曜日も直せるよ。"
       }
     ]
   });

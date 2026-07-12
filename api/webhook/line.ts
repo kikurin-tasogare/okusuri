@@ -1,7 +1,9 @@
 import {
   replyAskDays,
   replyAskTime,
+  replyDaysUpdated,
   replyDoseLogHistory,
+  replyEditDaysPrompt,
   replyEditTimePrompt,
   replyFeatureNotReady,
   replyLinked,
@@ -117,6 +119,11 @@ function parseTimeOnly(text: string): string | null {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+// Matches a time expression anywhere in a message. Lookarounds keep the
+// hour/minute alternations from matching a substring of a longer digit run
+// (e.g. the "4" in "24:00"), which would produce a bogus time.
+const timeExpressionPattern = /(?<!\d)([01]?\d|2[0-3])\s*(?::|：|時)\s*(?:([0-5]?\d)\s*分?)?(?!\d)/;
+
 const dayOfWeekKanji = "日月火水木金土";
 
 // Day-of-week tokens are matched only as whole whitespace-delimited tokens, so a
@@ -152,9 +159,7 @@ function parseDayOfWeekToken(token: string): number[] | null {
 
 function parseReminderDraft(text: string): ReminderDraft | null {
   const trimmed = toHalfWidthDigits(text.trim());
-  // Lookarounds keep the hour/minute alternations from matching a substring of a
-  // longer digit run (e.g. the "4" in "24:00"), which would produce a bogus time.
-  const timeMatch = trimmed.match(/(?<!\d)([01]?\d|2[0-3])\s*(?::|：|時)\s*(?:([0-5]?\d)\s*分?)?(?!\d)/);
+  const timeMatch = trimmed.match(timeExpressionPattern);
   if (!timeMatch) {
     return null;
   }
@@ -222,6 +227,14 @@ function normalizeDays(days: number[]) {
 function parseTitleOnly(text: string): { title: string; daysOfWeek: number[] | null } | null {
   const trimmed = toHalfWidthDigits(text.trim());
   if (!trimmed) {
+    return null;
+  }
+
+  // A message that contains a time expression is never a title. parseReminderDraft
+  // already had its chance to build a full draft from it; if that failed (no title
+  // next to the time), turning "10:00" itself into a title would start a garbage
+  // registration.
+  if (timeExpressionPattern.test(trimmed)) {
     return null;
   }
 
@@ -314,20 +327,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const text = event.message.text?.trim() ?? "";
 
         const pendingEdit = await takePendingEditSafely(lineUserId);
-        if (pendingEdit) {
-          const newTime = parseTimeOnly(text);
-          const isFresh = Date.now() - new Date(pendingEdit.created_at).getTime() <= pendingEditTtlMs;
-          if (newTime && isFresh) {
-            const { updateReminderTimeForLineUser } = await import("../../lib/reminders.js");
-            if (await updateReminderTimeForLineUser(pendingEdit.reminder_id, lineUserId, newTime)) {
-              await replyTimeUpdated(event.replyToken, newTime);
-            } else {
-              await replyReminderNotFound(event.replyToken);
+        if (pendingEdit && isPendingFresh(pendingEdit.created_at)) {
+          // A time-edit only reacts to a time message and a days-edit only reacts to
+          // a days message; anything else falls through to normal handling (the edit
+          // is already cleared, matching the original 時間を変える design).
+          if ((pendingEdit.kind ?? "time") === "days") {
+            const newDays = parseDaysOnly(text);
+            if (newDays !== undefined) {
+              const { updateReminderDaysForLineUser } = await import("../../lib/reminders.js");
+              if (await updateReminderDaysForLineUser(pendingEdit.reminder_id, lineUserId, newDays)) {
+                await replyDaysUpdated(event.replyToken, newDays);
+              } else {
+                await replyReminderNotFound(event.replyToken);
+              }
+              continue;
             }
-            continue;
+          } else {
+            const newTime = parseTimeOnly(text);
+            if (newTime) {
+              const { updateReminderTimeForLineUser } = await import("../../lib/reminders.js");
+              if (await updateReminderTimeForLineUser(pendingEdit.reminder_id, lineUserId, newTime)) {
+                await replyTimeUpdated(event.replyToken, newTime);
+              } else {
+                await replyReminderNotFound(event.replyToken);
+              }
+              continue;
+            }
           }
-          // Not a time-only message (or the request is too old): the pending edit is
-          // already cleared, so fall through to normal message handling.
         }
 
         // Commands always win over a half-finished guided registration.
@@ -388,6 +414,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 event.replyToken,
                 reminderDraftFromParts(pendingRegistration.title, pendingRegistration.time, days)
               );
+              continue;
+            }
+            // A time while we're asking for days means "actually, change the time":
+            // store it and ask for the days again with the new time.
+            const newTime = parseTimeOnly(text);
+            if (newTime) {
+              if (await setPendingRegistrationTimeSafely(lineUserId, newTime)) {
+                await replyAskDays(event.replyToken, newTime);
+              } else {
+                await replyRestartRegistration(event.replyToken);
+              }
               continue;
             }
           }
@@ -462,7 +499,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (data.type === "edit-time-pick" && event.postback.params?.time) {
           const time = event.postback.params.time;
           const pendingEdit = await takePendingEditSafely(lineUserId);
-          if (pendingEdit && isPendingFresh(pendingEdit.created_at)) {
+          // The kind check keeps an old time-picker chip from retargeting a pending
+          // days edit (and vice versa for the edit-days chips below).
+          if (pendingEdit && (pendingEdit.kind ?? "time") === "time" && isPendingFresh(pendingEdit.created_at)) {
             const { updateReminderTimeForLineUser } = await import("../../lib/reminders.js");
             if (await updateReminderTimeForLineUser(pendingEdit.reminder_id, lineUserId, time)) {
               await replyTimeUpdated(event.replyToken, time);
@@ -474,9 +513,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
         if (data.type === "record-reminder" && data.reminderId) {
-          const { recordReminder } = await import("../../lib/reminders.js");
-          await recordReminder(data.reminderId, lineUserId);
-          await replyRecorded(event.replyToken);
+          // A tap on an old notification whose reminder was deleted must not die
+          // silently (recordReminder throws): answer with "not found" instead.
+          const { findReminderForLineUser, recordReminder } = await import("../../lib/reminders.js");
+          if (await findReminderForLineUser(data.reminderId, lineUserId)) {
+            await recordReminder(data.reminderId, lineUserId);
+            await replyRecorded(event.replyToken);
+          } else {
+            await replyReminderNotFound(event.replyToken);
+          }
         }
 
         if (
@@ -486,23 +531,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           data.category &&
           data.actionLabel
         ) {
-          const { createReminder } = await import("../../lib/reminders.js");
+          const { createReminder, listRemindersForLineUser } = await import("../../lib/reminders.js");
           const daysOfWeek =
             Array.isArray(data.daysOfWeek) &&
             data.daysOfWeek.length > 0 &&
             data.daysOfWeek.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)
               ? (data.daysOfWeek as number[])
               : null;
-          await createReminder({
-            title: data.title,
-            time: data.time,
-            daysOfWeek,
-            enabled: true,
-            actionLabel: data.actionLabel,
-            kind: data.category === "other" ? "task" : "drink",
-            category: data.category,
-            lineUserId
-          });
+          // The 登録する button stays tappable in the chat history: a double tap (or a
+          // re-tap on an old confirm card) must not create a second identical reminder.
+          const daysKey = JSON.stringify(daysOfWeek);
+          const alreadyExists = (await listRemindersForLineUser(lineUserId)).some(
+            (reminder) =>
+              reminder.title === data.title &&
+              reminder.time === data.time &&
+              JSON.stringify(reminder.days_of_week ?? null) === daysKey
+          );
+          if (!alreadyExists) {
+            await createReminder({
+              title: data.title,
+              time: data.time,
+              daysOfWeek,
+              enabled: true,
+              actionLabel: data.actionLabel,
+              kind: data.category === "other" ? "task" : "drink",
+              category: data.category,
+              lineUserId
+            });
+          }
           await replyRegistrationDone(event.replyToken, {
             title: data.title,
             time: data.time,
@@ -519,9 +575,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (data.type === "snooze-reminder" && data.reminderId) {
-          const { createReminderSnooze } = await import("../../lib/reminders.js");
+          const { createReminderSnooze, findReminderForLineUser } = await import("../../lib/reminders.js");
           const remindAt = new Date(Date.now() + snoozeDelayMs);
-          if (await createReminderSnooze(data.reminderId, lineUserId, remindAt)) {
+          if (!(await findReminderForLineUser(data.reminderId, lineUserId))) {
+            await replyReminderNotFound(event.replyToken);
+          } else if (await createReminderSnooze(data.reminderId, lineUserId, remindAt)) {
             await replySnoozed(event.replyToken);
           } else {
             await replyFeatureNotReady(event.replyToken);
@@ -529,11 +587,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         if (data.type === "edit-reminder-time" && data.reminderId) {
-          const { setPendingEdit } = await import("../../lib/reminders.js");
-          if (await setPendingEdit(data.reminderId, lineUserId)) {
+          const { findReminderForLineUser, setPendingEdit } = await import("../../lib/reminders.js");
+          if (!(await findReminderForLineUser(data.reminderId, lineUserId))) {
+            await replyReminderNotFound(event.replyToken);
+          } else if (await setPendingEdit(data.reminderId, lineUserId, "time")) {
             await replyEditTimePrompt(event.replyToken);
           } else {
             await replyFeatureNotReady(event.replyToken);
+          }
+        }
+
+        if (data.type === "edit-reminder-days" && data.reminderId) {
+          const { findReminderForLineUser, setPendingEdit } = await import("../../lib/reminders.js");
+          if (!(await findReminderForLineUser(data.reminderId, lineUserId))) {
+            await replyReminderNotFound(event.replyToken);
+          } else if (await setPendingEdit(data.reminderId, lineUserId, "days")) {
+            await replyEditDaysPrompt(event.replyToken);
+          } else {
+            // Also reached while the pending_edits.kind column migration is missing.
+            await replyFeatureNotReady(event.replyToken);
+          }
+        }
+
+        if (data.type === "edit-days") {
+          const days =
+            Array.isArray(data.days) &&
+            data.days.length > 0 &&
+            data.days.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+              ? (data.days as number[])
+              : null;
+          const pendingEdit = await takePendingEditSafely(lineUserId);
+          if (pendingEdit && (pendingEdit.kind ?? "time") === "days" && isPendingFresh(pendingEdit.created_at)) {
+            const { updateReminderDaysForLineUser } = await import("../../lib/reminders.js");
+            if (await updateReminderDaysForLineUser(pendingEdit.reminder_id, lineUserId, days)) {
+              await replyDaysUpdated(event.replyToken, days);
+            } else {
+              await replyReminderNotFound(event.replyToken);
+            }
+          } else {
+            await replyReminderNotFound(event.replyToken);
           }
         }
       }

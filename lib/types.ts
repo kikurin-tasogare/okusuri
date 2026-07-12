@@ -42,10 +42,14 @@ export type ReminderSnoozeRow = {
   remind_at: string;
 };
 
+export type PendingEditKind = "time" | "days";
+
 export type PendingEditRow = {
   line_user_id: string;
   reminder_id: string;
   created_at: string;
+  // Absent while the kind column migration has not been applied yet.
+  kind?: PendingEditKind | null;
 };
 
 export type PendingRegistrationRow = {

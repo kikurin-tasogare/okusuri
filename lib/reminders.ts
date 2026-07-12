@@ -3,6 +3,7 @@ import { decryptPrivateText, encryptPrivateText } from "./privacy.js";
 import type {
   DoseLogHistoryEntry,
   LineUserRow,
+  PendingEditKind,
   PendingEditRow,
   PendingRegistrationRow,
   ReminderAdminSummaryRow,
@@ -16,6 +17,13 @@ import type {
 // cache") through Supabase's REST layer, not as Postgres's raw 42P01.
 function isMissingTableError(error: { code?: string }) {
   return error.code === "42P01" || error.code === "PGRST205";
+}
+
+// A column that exists in the code but not yet in the database surfaces as
+// PGRST204 ("could not find the column in the schema cache") through Supabase's
+// REST layer, or as Postgres's raw 42703.
+function isMissingColumnError(error: { code?: string }) {
+  return error.code === "42703" || error.code === "PGRST204";
 }
 
 export async function upsertLineUser(lineUserId: string) {
@@ -152,6 +160,25 @@ async function assertReminderOwnedByLineUser(reminderId: string, lineUserId: str
   }
 }
 
+export async function updateReminderDaysForLineUser(
+  reminderId: string,
+  lineUserId: string,
+  daysOfWeek: number[] | null
+) {
+  const { data, error } = await supabase
+    .from("reminders")
+    .update({ days_of_week: daysOfWeek })
+    .eq("id", reminderId)
+    .eq("line_user_id", lineUserId)
+    .select("id");
+
+  if (error) {
+    throw error;
+  }
+
+  return (data ?? []).length > 0;
+}
+
 export async function updateReminderTimeForLineUser(reminderId: string, lineUserId: string, time: string) {
   const { data, error } = await supabase
     .from("reminders")
@@ -266,6 +293,18 @@ export async function findDueReminders(now: Date) {
 export async function createReminderSnooze(reminderId: string, lineUserId: string, remindAt: Date) {
   await assertReminderOwnedByLineUser(reminderId, lineUserId);
 
+  // Replace any snooze already queued for this reminder: a double tap on あとで
+  // (or a tap on an older notification) must not stack up extra re-pushes.
+  const { error: clearError } = await supabase
+    .from("reminder_snoozes")
+    .delete()
+    .eq("reminder_id", reminderId)
+    .eq("line_user_id", lineUserId);
+
+  if (clearError && !isMissingTableError(clearError)) {
+    throw clearError;
+  }
+
   const { error } = await supabase.from("reminder_snoozes").insert({
     reminder_id: reminderId,
     line_user_id: lineUserId,
@@ -333,19 +372,29 @@ export async function findReminderForLineUser(reminderId: string, lineUserId: st
   return (data as ReminderRow | null) ?? null;
 }
 
-export async function setPendingEdit(reminderId: string, lineUserId: string) {
+export async function setPendingEdit(reminderId: string, lineUserId: string, kind: PendingEditKind = "time") {
   await assertReminderOwnedByLineUser(reminderId, lineUserId);
 
-  const { error } = await supabase.from("pending_edits").upsert(
-    {
-      line_user_id: lineUserId,
-      reminder_id: reminderId,
-      created_at: new Date().toISOString()
-    },
-    {
-      onConflict: "line_user_id"
+  const basePayload = {
+    line_user_id: lineUserId,
+    reminder_id: reminderId,
+    created_at: new Date().toISOString()
+  };
+
+  // kind is always written explicitly: the upsert must overwrite the kind left
+  // behind by a previous edit of the other flavor.
+  let { error } = await supabase
+    .from("pending_edits")
+    .upsert({ ...basePayload, kind }, { onConflict: "line_user_id" });
+
+  if (error && isMissingColumnError(error)) {
+    if (kind !== "time") {
+      // A days edit needs the kind column: without the migration it stays unavailable.
+      return false;
     }
-  );
+    // Pre-migration table without the kind column: a time edit still works as before.
+    ({ error } = await supabase.from("pending_edits").upsert(basePayload, { onConflict: "line_user_id" }));
+  }
 
   if (error) {
     if (isMissingTableError(error)) {
@@ -359,11 +408,12 @@ export async function setPendingEdit(reminderId: string, lineUserId: string) {
 }
 
 export async function takePendingEdit(lineUserId: string) {
+  // select("*") keeps this working whether or not the kind column exists yet.
   const { data, error } = await supabase
     .from("pending_edits")
     .delete()
     .eq("line_user_id", lineUserId)
-    .select("line_user_id, reminder_id, created_at")
+    .select("*")
     .maybeSingle();
 
   if (error) {

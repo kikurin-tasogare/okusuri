@@ -45,6 +45,7 @@ create table if not exists public.reminder_snoozes (
 create table if not exists public.pending_edits (
   line_user_id text primary key references public.line_users(line_user_id) on delete cascade,
   reminder_id uuid not null references public.reminders(id) on delete cascade,
+  kind text not null default 'time' check (kind in ('time', 'days')),
   created_at timestamptz not null default now()
 );
 
