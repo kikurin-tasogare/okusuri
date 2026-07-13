@@ -192,6 +192,17 @@ function reminderDraftPostback(draft: ReminderDraft) {
   });
 }
 
+function editDraftPostback(draft: ReminderDraft) {
+  return JSON.stringify({
+    type: "edit-draft",
+    title: draft.title,
+    time: draft.time,
+    daysOfWeek: draft.daysOfWeek,
+    category: draft.category,
+    actionLabel: draft.actionLabel
+  });
+}
+
 function registrationConfirmFlexMessage(draft: ReminderDraft): LineMessage {
   return {
     type: "flex",
@@ -259,6 +270,7 @@ function registrationConfirmFlexMessage(draft: ReminderDraft): LineMessage {
         type: "box",
         layout: "vertical",
         paddingAll: "18px",
+        spacing: "sm",
         contents: [
           {
             type: "button",
@@ -269,6 +281,16 @@ function registrationConfirmFlexMessage(draft: ReminderDraft): LineMessage {
               label: "登録する",
               data: reminderDraftPostback(draft),
               displayText: "登録する"
+            }
+          },
+          {
+            type: "button",
+            style: "secondary",
+            height: "sm",
+            action: {
+              type: "postback",
+              label: "編集する",
+              data: editDraftPostback(draft)
             }
           }
         ]
@@ -627,6 +649,60 @@ export async function replyRestartRegistration(replyToken: string) {
       {
         type: "text",
         text: "ごめんね、とちゅうでわからなくなっちゃった🪼\nもう一度、登録したい名前だけ送ってね。"
+      }
+    ]
+  });
+}
+
+export async function replyEditDraftMenu(replyToken: string, draft: ReminderDraft) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: "どこを直す？🪼",
+        quickReply: {
+          items: [
+            {
+              type: "action",
+              action: {
+                type: "postback",
+                label: "時間を変える",
+                // Time is being replaced, so only the title and days carry over.
+                data: JSON.stringify({ type: "edit-draft-time", title: draft.title, daysOfWeek: draft.daysOfWeek })
+              }
+            },
+            {
+              type: "action",
+              action: {
+                type: "postback",
+                label: "曜日を変える",
+                // Days are being replaced, so only the title and time carry over.
+                data: JSON.stringify({ type: "edit-draft-days", title: draft.title, time: draft.time })
+              }
+            },
+            {
+              type: "action",
+              action: {
+                type: "postback",
+                label: "取り消す",
+                data: JSON.stringify({ type: "edit-draft-cancel" })
+              }
+            }
+          ]
+        }
+      }
+    ]
+  });
+}
+
+export async function replyEditCancelled(replyToken: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: "やめておいたよ🌱\nまた気が向いたら送ってね。"
       }
     ]
   });

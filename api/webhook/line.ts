@@ -3,7 +3,9 @@ import {
   replyAskTime,
   replyDaysUpdated,
   replyDoseLogHistory,
+  replyEditCancelled,
   replyEditDaysPrompt,
+  replyEditDraftMenu,
   replyEditTimePrompt,
   replyFeatureNotReady,
   replyLinked,
@@ -204,6 +206,14 @@ function parseReminderDraft(text: string): ReminderDraft | null {
     category,
     actionLabel: category === "other" ? "やったよ" : "飲んだよ"
   };
+}
+
+function parseValidDays(value: unknown): number[] | null {
+  return Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+    ? (value as number[])
+    : null;
 }
 
 function reminderDraftFromParts(title: string, time: string, daysOfWeek: number[] | null): ReminderDraft {
@@ -503,6 +513,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
+        // A not-yet-saved draft's 編集する button: show the same kind of choices
+        // (time / days / cancel) the 一覧 card offers for already-saved reminders.
+        if (data.type === "edit-draft" && data.title && data.time && data.category && data.actionLabel) {
+          await replyEditDraftMenu(
+            event.replyToken,
+            reminderDraftFromParts(data.title, data.time, parseValidDays(data.daysOfWeek))
+          );
+        }
+
+        if (data.type === "edit-draft-time" && data.title) {
+          // Time is being replaced; keep whatever days were already chosen.
+          if (await setPendingRegistrationSafely(lineUserId, data.title, parseValidDays(data.daysOfWeek))) {
+            await replyAskTime(event.replyToken, data.title);
+          } else {
+            await replyRestartRegistration(event.replyToken);
+          }
+        }
+
+        if (data.type === "edit-draft-days" && data.title && data.time) {
+          // Days are being replaced; reset to "time set, days not yet chosen" so the
+          // normal awaiting-days branch (and the day chips) picks this up.
+          const started = await setPendingRegistrationSafely(lineUserId, data.title, null);
+          const updated = started ? await setPendingRegistrationTimeSafely(lineUserId, data.time) : null;
+          if (updated) {
+            await replyAskDays(event.replyToken, data.time);
+          } else {
+            await replyRestartRegistration(event.replyToken);
+          }
+        }
+
+        if (data.type === "edit-draft-cancel") {
+          await replyEditCancelled(event.replyToken);
+        }
+
         if (data.type === "edit-time-pick" && event.postback.params?.time) {
           const time = event.postback.params.time;
           const pendingEdit = await takePendingEditSafely(lineUserId);
@@ -539,12 +583,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           data.actionLabel
         ) {
           const { createReminder, listRemindersForLineUser } = await import("../../lib/reminders.js");
-          const daysOfWeek =
-            Array.isArray(data.daysOfWeek) &&
-            data.daysOfWeek.length > 0 &&
-            data.daysOfWeek.every((day) => Number.isInteger(day) && day >= 0 && day <= 6)
-              ? (data.daysOfWeek as number[])
-              : null;
+          const daysOfWeek = parseValidDays(data.daysOfWeek);
           // The 登録する button stays tappable in the chat history: a double tap (or a
           // re-tap on an old confirm card) must not create a second identical reminder.
           const daysKey = JSON.stringify(daysOfWeek);
