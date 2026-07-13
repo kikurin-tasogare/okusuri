@@ -406,6 +406,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               }
               continue;
             }
+            // Not a time and no command/one-shot registration matched above: re-ask
+            // rather than silently discarding this registration for a new one.
+            await replyAskTime(event.replyToken, pendingRegistration.title);
+            continue;
           } else {
             const days = parseDaysOnly(text);
             if (days !== undefined) {
@@ -427,8 +431,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               }
               continue;
             }
+            // Neither a valid day nor a time: re-ask rather than silently discarding
+            // this registration for a new one.
+            await replyAskDays(event.replyToken, pendingRegistration.time);
+            continue;
           }
-          // Any other text falls through: it may start a new guided registration below.
         } else if (pendingRegistration) {
           // Too old: forget it and treat the message normally.
           await takePendingRegistrationSafely(lineUserId);
