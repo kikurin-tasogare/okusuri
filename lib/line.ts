@@ -392,8 +392,7 @@ function reminderListFlexMessage(reminders: ReminderRow[]): LineMessage {
                   action: {
                     type: "postback",
                     label: "時間を変える",
-                    data: JSON.stringify({ type: "edit-reminder-time", reminderId: reminder.id }),
-                    displayText: "時間を変える"
+                    data: JSON.stringify({ type: "edit-reminder-time", reminderId: reminder.id })
                   }
                 },
                 {
@@ -404,8 +403,7 @@ function reminderListFlexMessage(reminders: ReminderRow[]): LineMessage {
                   action: {
                     type: "postback",
                     label: "曜日を変える",
-                    data: JSON.stringify({ type: "edit-reminder-days", reminderId: reminder.id }),
-                    displayText: "曜日を変える"
+                    data: JSON.stringify({ type: "edit-reminder-days", reminderId: reminder.id })
                   }
                 }
               ]
@@ -418,8 +416,7 @@ function reminderListFlexMessage(reminders: ReminderRow[]): LineMessage {
               action: {
                 type: "postback",
                 label: "削除する",
-                data: JSON.stringify({ type: "delete-reminder", reminderId: reminder.id }),
-                displayText: "削除する"
+                data: JSON.stringify({ type: "delete-reminder", reminderId: reminder.id })
               }
             }
           ]
@@ -538,8 +535,7 @@ export async function replyReminderDeleted(replyToken: string, deletedDraft?: Re
                 action: {
                   type: "postback",
                   label: "もとに戻す",
-                  data: reminderDraftPostback(deletedDraft),
-                  displayText: "もとに戻す"
+                  data: reminderDraftPostback(deletedDraft)
                 }
               }
             ]
@@ -592,8 +588,7 @@ function daysQuickReply(postbackType: "reg-days" | "edit-days"): LineMessagingAp
       action: {
         type: "postback" as const,
         label: preset.label,
-        data: JSON.stringify({ type: postbackType, days: preset.days }),
-        displayText: preset.label
+        data: JSON.stringify({ type: postbackType, days: preset.days })
       }
     }))
   };
