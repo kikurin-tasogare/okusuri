@@ -336,10 +336,10 @@ function reminderListFlexMessage(reminders: ReminderRow[]): LineMessage {
       type: "carousel",
       contents: reminders.slice(0, 10).map((reminder) => ({
         type: "bubble",
-        size: "micro",
+        size: "kilo",
         styles: {
           body: { backgroundColor: "#F8FFFC" },
-          footer: { backgroundColor: "#F8FFFC" }
+          footer: { backgroundColor: "#F8FFFC", separator: true, separatorColor: "#E4F6F3" }
         },
         body: {
           type: "box",
@@ -358,20 +358,19 @@ function reminderListFlexMessage(reminders: ReminderRow[]): LineMessage {
             {
               type: "text",
               text: reminder.time,
-              size: "xl",
+              size: "xxl",
               weight: "bold",
               color: "#6CC8BB"
             },
-            ...(reminder.days_of_week && reminder.days_of_week.length > 0
-              ? [
-                  {
-                    type: "text" as const,
-                    text: formatDaysOfWeek(reminder.days_of_week),
-                    size: "xs",
-                    color: "#7D9398"
-                  }
-                ]
-              : [])
+            {
+              type: "text",
+              text:
+                reminder.days_of_week && reminder.days_of_week.length > 0
+                  ? formatDaysOfWeek(reminder.days_of_week)
+                  : "毎日",
+              size: "xs",
+              color: "#7D9398"
+            }
           ]
         },
         footer: {
@@ -381,31 +380,41 @@ function reminderListFlexMessage(reminders: ReminderRow[]): LineMessage {
           spacing: "sm",
           contents: [
             {
-              type: "button",
-              style: "secondary",
-              height: "sm",
-              action: {
-                type: "postback",
-                label: "時間を変える",
-                data: JSON.stringify({ type: "edit-reminder-time", reminderId: reminder.id }),
-                displayText: "時間を変える"
-              }
+              type: "box",
+              layout: "horizontal",
+              spacing: "sm",
+              contents: [
+                {
+                  type: "button",
+                  style: "secondary",
+                  height: "sm",
+                  flex: 1,
+                  action: {
+                    type: "postback",
+                    label: "時間を変える",
+                    data: JSON.stringify({ type: "edit-reminder-time", reminderId: reminder.id }),
+                    displayText: "時間を変える"
+                  }
+                },
+                {
+                  type: "button",
+                  style: "secondary",
+                  height: "sm",
+                  flex: 1,
+                  action: {
+                    type: "postback",
+                    label: "曜日を変える",
+                    data: JSON.stringify({ type: "edit-reminder-days", reminderId: reminder.id }),
+                    displayText: "曜日を変える"
+                  }
+                }
+              ]
             },
             {
               type: "button",
               style: "secondary",
               height: "sm",
-              action: {
-                type: "postback",
-                label: "曜日を変える",
-                data: JSON.stringify({ type: "edit-reminder-days", reminderId: reminder.id }),
-                displayText: "曜日を変える"
-              }
-            },
-            {
-              type: "button",
-              style: "secondary",
-              height: "sm",
+              color: "#FFF2EF",
               action: {
                 type: "postback",
                 label: "削除する",
