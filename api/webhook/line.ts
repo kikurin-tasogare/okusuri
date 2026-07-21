@@ -18,6 +18,8 @@ import {
   replyReminderNotFound,
   replyRestartRegistration,
   replySnoozed,
+  replySnoozedAtTime,
+  replySnoozeSkipped,
   replyTimeUpdated,
   replyUsage,
   verifyLineSignature,
@@ -108,6 +110,20 @@ function inferCategory(title: string): ReminderCategory {
 
 function toHalfWidthDigits(text: string) {
   return text.replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+}
+
+// Turns a picked "HH:mm" into the next Asia/Tokyo occurrence of that clock time —
+// today if it's still ahead, tomorrow if that time has already passed today.
+function nextTokyoOccurrence(time: string, now: Date): Date {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(now);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? "";
+  const todayAt = new Date(`${part("year")}-${part("month")}-${part("day")}T${time}:00+09:00`);
+  return todayAt.getTime() > now.getTime() ? todayAt : new Date(todayAt.getTime() + 24 * 60 * 60 * 1000);
 }
 
 function parseTimeOnly(text: string): string | null {
@@ -653,6 +669,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             await replySnoozed(event.replyToken, minutes);
           } else {
             await replyFeatureNotReady(event.replyToken);
+          }
+        }
+
+        if (data.type === "snooze-pick" && data.reminderId && event.postback.params?.time) {
+          const time = event.postback.params.time;
+          const { createReminderSnooze, findReminderForLineUser } = await import("../../lib/reminders.js");
+          const remindAt = nextTokyoOccurrence(time, new Date());
+          if (!(await findReminderForLineUser(data.reminderId, lineUserId))) {
+            await replyReminderNotFound(event.replyToken);
+          } else if (await createReminderSnooze(data.reminderId, lineUserId, remindAt)) {
+            await replySnoozedAtTime(event.replyToken, time);
+          } else {
+            await replyFeatureNotReady(event.replyToken);
+          }
+        }
+
+        if (data.type === "snooze-skip" && data.reminderId) {
+          const { findReminderForLineUser } = await import("../../lib/reminders.js");
+          if (await findReminderForLineUser(data.reminderId, lineUserId)) {
+            await replySnoozeSkipped(event.replyToken);
+          } else {
+            await replyReminderNotFound(event.replyToken);
           }
         }
 

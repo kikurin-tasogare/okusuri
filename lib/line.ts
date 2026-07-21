@@ -580,17 +580,48 @@ export async function replyAskSnoozeDelay(replyToken: string, reminderId: string
     messages: [
       {
         type: "text",
-        text: "何分後がいい？🪼",
+        text: "何分後がいい？🪼\n時間を選んだり、今日は通知しないこともできるよ。",
         quickReply: {
-          items: snoozeDelayPresets.map((preset) => ({
-            type: "action" as const,
-            action: {
-              type: "postback" as const,
-              label: preset.label,
-              data: JSON.stringify({ type: "snooze-reminder", reminderId, minutes: preset.minutes })
+          items: [
+            ...snoozeDelayPresets.map((preset) => ({
+              type: "action" as const,
+              action: {
+                type: "postback" as const,
+                label: preset.label,
+                data: JSON.stringify({ type: "snooze-reminder", reminderId, minutes: preset.minutes })
+              }
+            })),
+            {
+              type: "action" as const,
+              action: {
+                type: "datetimepicker" as const,
+                label: "時間を選ぶ",
+                data: JSON.stringify({ type: "snooze-pick", reminderId }),
+                mode: "time" as const
+              }
+            },
+            {
+              type: "action" as const,
+              action: {
+                type: "postback" as const,
+                label: "通知しない",
+                data: JSON.stringify({ type: "snooze-skip", reminderId })
+              }
             }
-          }))
+          ]
         }
+      }
+    ]
+  });
+}
+
+export async function replySnoozeSkipped(replyToken: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: "わかったよ🌱\n今日は無理しないでね。"
       }
     ]
   });
@@ -603,6 +634,18 @@ export async function replySnoozed(replyToken: string, minutes: number) {
       {
         type: "text",
         text: `わかったよ🌼\n${minutes}分くらいしたら、またそっと声かけるね。`
+      }
+    ]
+  });
+}
+
+export async function replySnoozedAtTime(replyToken: string, time: string) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: `わかったよ🌼\n${time}に、またそっと声かけるね。`
       }
     ]
   });
