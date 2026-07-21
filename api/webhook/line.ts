@@ -1,5 +1,6 @@
 import {
   replyAskDays,
+  replyAskSnoozeDelay,
   replyAskTime,
   replyDaysUpdated,
   replyDoseLogHistory,
@@ -26,7 +27,7 @@ import { ensureResponseHelpers, readRawBody, type VercelRequest, type VercelResp
 import type { PendingEditRow, PendingRegistrationRow, ReminderCategory } from "../../lib/types.js";
 
 const pendingEditTtlMs = 10 * 60 * 1000;
-const snoozeDelayMs = 15 * 60 * 1000;
+const allowedSnoozeMinutes = [15, 30, 60];
 
 type LineEvent = {
   type: string;
@@ -471,6 +472,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           daysOfWeek?: unknown;
           category?: ReminderCategory;
           actionLabel?: "飲んだよ" | "やったよ";
+          minutes?: unknown;
         };
 
         if (data.type === "reg-time" && event.postback.params?.time) {
@@ -632,13 +634,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
+        if (data.type === "snooze-ask" && data.reminderId) {
+          const { findReminderForLineUser } = await import("../../lib/reminders.js");
+          if (await findReminderForLineUser(data.reminderId, lineUserId)) {
+            await replyAskSnoozeDelay(event.replyToken, data.reminderId);
+          } else {
+            await replyReminderNotFound(event.replyToken);
+          }
+        }
+
         if (data.type === "snooze-reminder" && data.reminderId) {
           const { createReminderSnooze, findReminderForLineUser } = await import("../../lib/reminders.js");
-          const remindAt = new Date(Date.now() + snoozeDelayMs);
+          const minutes = allowedSnoozeMinutes.includes(data.minutes as number) ? (data.minutes as number) : 15;
+          const remindAt = new Date(Date.now() + minutes * 60 * 1000);
           if (!(await findReminderForLineUser(data.reminderId, lineUserId))) {
             await replyReminderNotFound(event.replyToken);
           } else if (await createReminderSnooze(data.reminderId, lineUserId, remindAt)) {
-            await replySnoozed(event.replyToken);
+            await replySnoozed(event.replyToken, minutes);
           } else {
             await replyFeatureNotReady(event.replyToken);
           }

@@ -117,7 +117,7 @@ function reminderFlexMessage(reminderId: string, actionLabel: string): LineMessa
             action: {
               type: "postback",
               label: "あとで",
-              data: JSON.stringify({ type: "snooze-reminder", reminderId }),
+              data: JSON.stringify({ type: "snooze-ask", reminderId }),
               displayText: "あとで"
             }
           }
@@ -568,13 +568,41 @@ export async function replyReminderDeleted(replyToken: string, deletedDraft?: Re
   });
 }
 
-export async function replySnoozed(replyToken: string) {
+const snoozeDelayPresets: Array<{ label: string; minutes: number }> = [
+  { label: "15分後", minutes: 15 },
+  { label: "30分後", minutes: 30 },
+  { label: "1時間後", minutes: 60 }
+];
+
+export async function replyAskSnoozeDelay(replyToken: string, reminderId: string) {
   await lineClient.replyMessage({
     replyToken,
     messages: [
       {
         type: "text",
-        text: "わかったよ🌼\n15分くらいしたら、またそっと声かけるね。"
+        text: "何分後がいい？🪼",
+        quickReply: {
+          items: snoozeDelayPresets.map((preset) => ({
+            type: "action" as const,
+            action: {
+              type: "postback" as const,
+              label: preset.label,
+              data: JSON.stringify({ type: "snooze-reminder", reminderId, minutes: preset.minutes })
+            }
+          }))
+        }
+      }
+    ]
+  });
+}
+
+export async function replySnoozed(replyToken: string, minutes: number) {
+  await lineClient.replyMessage({
+    replyToken,
+    messages: [
+      {
+        type: "text",
+        text: `わかったよ🌼\n${minutes}分くらいしたら、またそっと声かけるね。`
       }
     ]
   });
